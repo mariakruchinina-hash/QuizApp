@@ -1,4 +1,12 @@
 <resources>
     <string name="app_name">QuizApp</string>
     <string name="welcome">Добро пожаловать в викторину!</string>
+    <string name="description">Это викторина о столицах мира. В ней 5 вопросов, в каждом 4 варианта ответа. Выберите правильный.</string>
+    <string name="start">Начать</string>
+    <string name="question_number">Вопрос 1 из 5</string>
+    <string name="question">Какой город является столицей Франции?</string>
+    <string name="answer1">Лондон</string>
+    <string name="answer2">Париж</string>
+    <string name="answer3">Берлин</string>
+    <string name="answer4">Мадрид</string>
 </resources>
