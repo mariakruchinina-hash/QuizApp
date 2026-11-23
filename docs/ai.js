@@ -36,6 +36,11 @@
     return m ? parseFloat(m[1]) : 0;
   }
 
+  function score(n) {
+    return versionOf(n) * 10 - (/lite/.test(n) ? 3 : 0) - (/preview/.test(n) ? 12 : 0) - (/-\d{3}$|-\d{2}-\d{4}$/.test(n) ? 0.5 : 0);
+  }
+  function byScore(a, b) { return score(b) - score(a); }
+
   async function listModels() {
     const res = await fetch(`${API}/models?pageSize=200`, { headers: { 'x-goog-api-key': key() } });
     if (!res.ok) throw await apiError(res);
@@ -44,10 +49,7 @@
       .filter((m) => (m.supportedGenerationMethods || []).includes('generateContent'))
       .map((m) => m.name.replace(/^models\//, ''))
       .filter((n) => /^gemini-[\d.]+-flash/.test(n) && !/(image|tts|audio|live|thinking|exp|8b)/.test(n))
-      .sort((a, b) => {
-        const score = (n) => versionOf(n) * 10 - (/lite/.test(n) ? 3 : 0) - (/preview/.test(n) ? 1 : 0) - (/-\d{3}$|-\d{2}-\d{4}$/.test(n) ? 0.5 : 0);
-        return score(b) - score(a);
-      });
+      .sort(byScore);
   }
 
   async function apiError(res) {
@@ -61,15 +63,21 @@
   /* Проверка ключа и выбор лучшей доступной бесплатной модели */
   async function setup(newKey) {
     store.set('apiKey', newKey.trim());
-    const models = await listModels();
-    if (!models.length) throw new Error('Не нашлось подходящих моделей Gemini для этого ключа');
-    store.set('models', models.slice(0, 5));
-    return models[0];
+    const found = await listModels();
+    if (!found.length) throw new Error('Не нашлось подходящих моделей Gemini для этого ключа');
+    store.set('models', found.slice(0, 8));
+    return models()[0];
   }
 
-  function models() {
+  function allModels() {
     const list = store.get('models', []);
-    return list.length ? list : ['gemini-2.5-flash', 'gemini-2.0-flash'];
+    return list.length ? list.slice().sort(byScore) : ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
+  }
+  /* выбранная в настройках модель идёт первой, остальные остаются запасными */
+  function models() {
+    const list = allModels();
+    const pref = store.get('modelPref', '');
+    return pref && list.includes(pref) ? [pref].concat(list.filter((m) => m !== pref)) : list;
   }
 
   function remember(role, text) {
@@ -267,5 +275,5 @@
     return lines.join('\n');
   }
 
-  window.LouisAI = { hasKey, setup, ask, forget, explain, models, key, cancel, ping };
+  window.LouisAI = { hasKey, setup, ask, forget, explain, models, allModels, key, cancel, ping };
 })();

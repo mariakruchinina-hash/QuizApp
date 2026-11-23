@@ -43,6 +43,8 @@
   let speaking = false;
   let listening = false;
   let busy = false;
+  let lastLouisText = '';
+  let lastTiming = '';
 
   function setEmotion(e, holdMs) {
     if (!EMOTIONS.includes(e)) e = 'neutral';
@@ -169,6 +171,7 @@
     let closed = false;
     let finished = false;
     let fakeUntil = 0;
+    let silentChecks = 0;
     const tryFinish = () => {
       if (finished || !closed || pending > 0) return;
       const wait = Math.max(0, fakeUntil - Date.now());
@@ -182,7 +185,10 @@
     const guard = setInterval(() => {
       if (finished) { clearInterval(guard); return; }
       // страховка, если iOS потерял onend
-      if (useVoice && pending > 0 && !speechSynthesis.speaking && !speechSynthesis.pending) { pending = 0; tryFinish(); }
+      if (useVoice && pending > 0 && !speechSynthesis.speaking && !speechSynthesis.pending) {
+        silentChecks++;
+        if (silentChecks >= 2) { pending = 0; tryFinish(); }
+      } else silentChecks = 0;
     }, 1500);
     return {
       push(text) {
@@ -232,6 +238,7 @@
   }
 
   function louisSays(res, done) {
+    lastLouisText = res.text;
     addMsg(res.text, 'louis');
     setEmotion(res.emotion || 'neutral', res.emotion === 'sleepy' ? 0 : 6000);
     if (res.bounce || res.emotion === 'love') bounce();
@@ -268,12 +275,16 @@
     const wantsTimer = /(таймер|засеки|напомни.*через|разбуди.*через)/.test(t);
     const bye = /^(пока|до свидания|спокойной ночи|хватит|стоп)/.test(t);
 
-    const after = () => { if (convo) listen(); };
+    const after = () => { if (convo) setTimeout(listen, 600); };
     if (AI.hasKey() && !wantsTimer) {
       status.textContent = 'Думаю…';
       let bubble = null;
       let spoken = 0;
       let lastEmotion = '';
+      const t0 = Date.now();
+      let firstAt = 0;
+      const wantsLook = /(вид|смотр|гляд|выгляж|что это|что у меня|покаж|кто это|кто здесь|цвет|пальц|прочита|узна|замеч|оцени|какой я|какая я|во что|одет|на мне|в руке|в руках)/.test(t);
+      const image = wantsLook ? snap() : null;
       const speaker = createSpeaker(after);
       // отдаём голосу законченные предложения, не дожидаясь конца ответа
       const feed = (text, final) => {
@@ -293,13 +304,15 @@
         if (cut > 0) { speaker.push(rest.slice(0, cut)); spoken += cut; }
       };
       try {
-        const res = await AI.ask(text, snap(), (part) => {
+        const res = await AI.ask(text, image, (part) => {
           if (!bubble) {
             status.textContent = '';
             look(0, 0);
             bubble = addMsg('', 'louis');
           }
           bubble.textContent = part.text;
+          lastLouisText = part.text;
+          if (!firstAt) firstAt = Date.now();
           chat.scrollTop = chat.scrollHeight;
           if (app.classList.contains('face-only')) status.textContent = part.text;
           if (part.emotion !== lastEmotion) {
@@ -311,6 +324,8 @@
         });
         if (!bubble) bubble = addMsg('', 'louis');
         bubble.textContent = res.text;
+        lastLouisText = res.text;
+        lastTiming = `Последний ответ: Google начал отвечать через ${((firstAt - t0) / 1000).toFixed(1)} с${image ? ' (с кадром камеры)' : ''}, модель ${AI.models()[0]}`;
         feed(res.text, true);
         setEmotion(res.emotion, 6000);
         aiWarned = false;
@@ -402,51 +417,81 @@
     if (msg) status.textContent = msg;
   }
 
+  /* Похоже ли услышанное на то, что только что сказал сам Луи (эхо из динамика) */
+  function isEcho(text) {
+    if (!lastLouisText) return false;
+    const words = (x) => x.toLowerCase().replace(/ё/g, 'е').replace(/[^а-яa-z0-9\s]/g, ' ').split(/\s+/).filter((w) => w.length > 2);
+    const heard = words(text);
+    if (!heard.length) return false;
+    const said = new Set(words(lastLouisText));
+    const hit = heard.filter((w) => said.has(w)).length;
+    return hit / heard.length >= 0.6;
+  }
+
   function listen() {
     if (!convo || listening || busy) return;
-    if ('speechSynthesis' in window) speechSynthesis.cancel();
+    // не включаем микрофон, пока Луи ещё говорит, иначе он услышит сам себя
+    if (speaking || ('speechSynthesis' in window && speechSynthesis.speaking)) { setTimeout(listen, 300); return; }
     rec = new SR();
     rec.lang = 'ru-RU';
     rec.interimResults = true;
     rec.continuous = false;
     rec.maxAlternatives = 1;
-    let finalText = '';
+    let heard = '';
+    let done = false;
     let denied = false;
+    let quiet = null;
+
+    // iPhone долго ждёт тишины сам; мы решаем быстрее: 1,1 с без новых слов значит «договорил»
+    const finishNow = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(quiet);
+      try { rec.stop(); } catch (e) { /* ignore */ }
+      setListening(false);
+      gotPhrase(heard.trim());
+    };
 
     rec.onresult = (ev) => {
-      let interim = '';
-      for (let i = ev.resultIndex; i < ev.results.length; i++) {
-        const r = ev.results[i];
-        if (r.isFinal) finalText += r[0].transcript;
-        else interim += r[0].transcript;
-      }
-      status.textContent = 'Слушаю… ' + (finalText + interim).trim();
+      let all = '';
+      for (let i = 0; i < ev.results.length; i++) all += ev.results[i][0].transcript;
+      heard = all;
+      status.textContent = 'Слушаю… ' + all.trim();
+      clearTimeout(quiet);
+      if (all.trim()) quiet = setTimeout(finishNow, 1100);
     };
     rec.onerror = (ev) => {
       if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') denied = true;
     };
     rec.onend = () => {
+      clearTimeout(quiet);
+      if (done) return;
+      done = true;
       setListening(false);
       if (denied) {
         stopConvo();
         louisSays({ text: 'Мне не дали включить микрофон. Нажми 🎤 ещё раз, а если не выйдет, разреши микрофон для Safari в Настройках iPhone или пользуйся диктовкой на клавиатуре.', emotion: 'sad' });
         return;
       }
-      const text = finalText.trim();
-      if (text) {
-        silentRounds = 0;
-        handle(text);
-      } else if (convo) {
-        silentRounds++;
-        if (silentRounds >= 6) stopConvo('Я замолчал, чтобы не мешать. Нажми 🎤, чтобы поболтать');
-        else setTimeout(listen, 250);
-      }
+      gotPhrase(heard.trim());
     };
     try {
       rec.start();
       setListening(true);
     } catch (err) {
       stopConvo('Нажми 🎤, чтобы я снова слушал');
+    }
+  }
+
+  function gotPhrase(text) {
+    if (text && isEcho(text)) text = '';
+    if (text) {
+      silentRounds = 0;
+      handle(text);
+    } else if (convo) {
+      silentRounds++;
+      if (silentRounds >= 6) stopConvo('Я замолчал, чтобы не мешать. Нажми 🎤, чтобы поболтать');
+      else setTimeout(listen, 250);
     }
   }
 
@@ -526,6 +571,8 @@
     showKeyStatus(AI.hasKey() ? 'Ключ сохранён, Луи умный. Модель: ' + AI.models()[0] : 'Ключ не задан, Луи отвечает простыми фразами.', AI.hasKey() ? 'ok' : '');
     pickVoice();
     showVoiceVals();
+    $('pingOut').textContent = lastTiming;
+    fillModelSelect();
     if (dlg.showModal) dlg.showModal(); else dlg.setAttribute('open', '');
   });
 
@@ -561,6 +608,20 @@
   $('rate').addEventListener('input', (e) => { voiceCfg.rate = parseFloat(e.target.value); store.set('rate', voiceCfg.rate); showVoiceVals(); });
   $('btnTryVoice').addEventListener('click', () => say('Привет! Я Луи. Мне очень нравится с тобой болтать.'));
 
+  function fillModelSelect() {
+    const sel = $('modelSel');
+    sel.innerHTML = '';
+    const cur = AI.models()[0];
+    AI.allModels().forEach((m) => {
+      const note = /lite/.test(m) ? ' (самая быстрая)' : /preview/.test(m) ? ' (экспериментальная)' : '';
+      sel.add(new Option(m + note, m, false, m === cur));
+    });
+  }
+  $('modelSel').addEventListener('change', (e) => {
+    store.set('modelPref', e.target.value);
+    showKeyStatus('Модель: ' + e.target.value, 'ok');
+  });
+
   $('btnPing').addEventListener('click', async () => {
     const out = $('pingOut');
     if (!AI.hasKey()) { out.textContent = 'Сначала сохрани ключ.'; return; }
@@ -575,6 +636,7 @@
     try {
       const model = await AI.setup(k);
       showKeyStatus('Готово! Луи теперь умный. Модель: ' + model, 'ok');
+      fillModelSelect();
       updateBadge();
     } catch (err) {
       showKeyStatus(AI.explain(err).replace(/ ?А пока.*$| ?Пока поболтаю.*$| ?Пока отвечу.*$/, ''), 'err');
