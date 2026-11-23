@@ -204,3 +204,13 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .key-status { margin: 0; font-size: 14px; min-height: 1em; }
 .key-status.ok { color: #1f9d6b; }
 .key-status.err { color: #d64561; }
+
+.settings h3 { margin: 6px 0 0; font-size: 17px; }
+.settings select {
+  height: 44px; border-radius: 12px; border: 1px solid var(--border); background: var(--bg); color: var(--text);
+  padding: 0 10px; font-size: 16px;
+}
+.settings .slider { display: grid; grid-template-columns: 84px 1fr 40px; align-items: center; gap: 8px; font-size: 15px; }
+.settings .slider input { flex: 1; accent-color: var(--accent); }
+.settings .slider span { width: 36px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+.settings .wide { height: 42px; border-radius: 12px; border: 1px solid var(--border); background: var(--bg); }

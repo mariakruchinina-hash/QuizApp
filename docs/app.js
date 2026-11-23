@@ -105,11 +105,24 @@
   let soundOn = store.get('sound', true);
   let talkAnim = null;
   let ruVoice = null;
+  const voiceCfg = { uri: store.get('voiceURI', ''), pitch: store.get('pitch', 1.1), rate: store.get('rate', 1.05) };
 
+  function ruVoices() {
+    if (!('speechSynthesis' in window)) return [];
+    return speechSynthesis.getVoices().filter((v) => v.lang && v.lang.toLowerCase().replace('_', '-').startsWith('ru'));
+  }
+  function voiceQuality(v) {
+    const id = (v.name + ' ' + v.voiceURI).toLowerCase();
+    if (/premium|высок/.test(id)) return 3;
+    if (/enhanced|улучш|neural/.test(id)) return 2;
+    if (/compact|eloquence/.test(id)) return 0;
+    return 1;
+  }
   function pickVoice() {
-    if (!('speechSynthesis' in window)) return;
-    const voices = speechSynthesis.getVoices().filter((v) => v.lang && v.lang.toLowerCase().startsWith('ru'));
-    ruVoice = voices.find((v) => /milena|милена/i.test(v.name)) || voices.find((v) => v.localService) || voices[0] || null;
+    const voices = ruVoices();
+    ruVoice = voices.find((v) => v.voiceURI === voiceCfg.uri) ||
+      voices.slice().sort((a, b) => voiceQuality(b) - voiceQuality(a))[0] || null;
+    fillVoiceSelect();
   }
   if ('speechSynthesis' in window) {
     pickVoice();
@@ -117,13 +130,14 @@
   }
 
   function startTalking() {
+    if (speaking) return;
     speaking = true;
     let open = false;
     clearInterval(talkAnim);
     talkAnim = setInterval(() => {
       open = !open;
       mouth.setAttribute('d', open ? MOUTHS.talk : MOUTHS[emotion]);
-    }, 160 + Math.random() * 60);
+    }, 150 + Math.random() * 60);
   }
   function stopTalking() {
     speaking = false;
@@ -135,38 +149,64 @@
     return text
       .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu, '')
       .replace(/\n+/g, '. ')
-      .replace(/[«»()]/g, '');
+      .replace(/[«»()]/g, '')
+      .trim();
   }
 
-  /* say(text, done): done вызывается, когда Луи договорил */
-  function say(text, done) {
+  function makeUtterance(text) {
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'ru-RU';
+    if (ruVoice) u.voice = ruVoice;
+    u.pitch = voiceCfg.pitch;
+    u.rate = voiceCfg.rate;
+    return u;
+  }
+
+  /* Говорилка, которой можно подкидывать фразы по мере того, как они готовы.
+     done вызывается, когда сказано всё и больше фраз не будет. */
+  function createSpeaker(done) {
+    let pending = 0;
+    let closed = false;
     let finished = false;
-    const finish = () => {
-      if (finished) return;
+    let fakeUntil = 0;
+    const tryFinish = () => {
+      if (finished || !closed || pending > 0) return;
+      const wait = Math.max(0, fakeUntil - Date.now());
+      if (wait) { setTimeout(tryFinish, wait + 20); return; }
       finished = true;
       stopTalking();
       if (done) done();
     };
-    if (!soundOn || !('speechSynthesis' in window)) {
-      startTalking();
-      setTimeout(finish, Math.min(5000, 400 + text.length * 40));
-      return;
-    }
-    speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(cleanForSpeech(text));
-    u.lang = 'ru-RU';
-    if (ruVoice) u.voice = ruVoice;
-    u.pitch = 1.45;
-    u.rate = 1.03;
-    u.onstart = startTalking;
-    u.onend = finish;
-    u.onerror = finish;
-    speechSynthesis.speak(u);
-    // страховка, если iOS не прислал onend
+    const useVoice = soundOn && 'speechSynthesis' in window;
+    if (useVoice) speechSynthesis.cancel();
     const guard = setInterval(() => {
       if (finished) { clearInterval(guard); return; }
-      if (!speechSynthesis.speaking && !speechSynthesis.pending) { clearInterval(guard); finish(); }
-    }, 700);
+      // страховка, если iOS потерял onend
+      if (useVoice && pending > 0 && !speechSynthesis.speaking && !speechSynthesis.pending) { pending = 0; tryFinish(); }
+    }, 1500);
+    return {
+      push(text) {
+        text = cleanForSpeech(text);
+        if (!text) return;
+        if (!useVoice) {
+          startTalking();
+          fakeUntil = Math.max(fakeUntil, Date.now()) + Math.min(5000, 300 + text.length * 45);
+          return;
+        }
+        pending++;
+        const u = makeUtterance(text);
+        u.onstart = startTalking;
+        u.onend = u.onerror = () => { pending = Math.max(0, pending - 1); if (pending === 0 && !closed) stopTalking(); tryFinish(); };
+        speechSynthesis.speak(u);
+      },
+      end() { closed = true; tryFinish(); }
+    };
+  }
+
+  function say(text, done) {
+    const sp = createSpeaker(done);
+    sp.push(text);
+    sp.end();
   }
 
   function renderSound() { btnSound.textContent = soundOn ? '🔊' : '🔇'; }
@@ -188,6 +228,7 @@
     chat.scrollTop = chat.scrollHeight;
     const msgs = chat.querySelectorAll('.msg');
     if (msgs.length > 120) msgs[0].remove();
+    return el;
   }
 
   function louisSays(res, done) {
@@ -227,28 +268,79 @@
     const wantsTimer = /(таймер|засеки|напомни.*через|разбуди.*через)/.test(t);
     const bye = /^(пока|до свидания|спокойной ночи|хватит|стоп)/.test(t);
 
-    let res = null;
+    const after = () => { if (convo) listen(); };
     if (AI.hasKey() && !wantsTimer) {
       status.textContent = 'Думаю…';
+      let bubble = null;
+      let spoken = 0;
+      let lastEmotion = '';
+      const speaker = createSpeaker(after);
+      // отдаём голосу законченные предложения, не дожидаясь конца ответа
+      const feed = (text, final) => {
+        const rest = text.slice(spoken);
+        let cut = -1;
+        if (final) cut = rest.length;
+        else {
+          const re = /[.!?…]+["»)]*\s+|[,;:—]\s+(?=\S{2,})/g;
+          let m;
+          while ((m = re.exec(rest))) {
+            const end = m.index + m[0].length;
+            const isSentence = /[.!?…]/.test(m[0]);
+            // запятая годится для паузы только в длинном куске
+            if (isSentence || end > 60) cut = end;
+          }
+        }
+        if (cut > 0) { speaker.push(rest.slice(0, cut)); spoken += cut; }
+      };
       try {
-        res = await AI.ask(text, snap());
+        const res = await AI.ask(text, snap(), (part) => {
+          if (!bubble) {
+            status.textContent = '';
+            look(0, 0);
+            bubble = addMsg('', 'louis');
+          }
+          bubble.textContent = part.text;
+          chat.scrollTop = chat.scrollHeight;
+          if (app.classList.contains('face-only')) status.textContent = part.text;
+          if (part.emotion !== lastEmotion) {
+            lastEmotion = part.emotion;
+            setEmotion(part.emotion, 0);
+            if (part.emotion === 'love') bounce();
+          }
+          feed(part.text, false);
+        });
+        if (!bubble) bubble = addMsg('', 'louis');
+        bubble.textContent = res.text;
+        feed(res.text, true);
+        setEmotion(res.emotion, 6000);
         aiWarned = false;
+        busy = false;
+        if (bye) convo = false;
+        speaker.end();
+        return;
       } catch (err) {
+        if (bubble) {
+          // ответ оборвался на середине: договариваем то, что уже пришло
+          feed(bubble.textContent, true);
+          busy = false;
+          speaker.end();
+          return;
+        }
+        speaker.end();
+        if (status.textContent === 'Думаю…') status.textContent = '';
         if (!aiWarned) {
           aiWarned = true;
           addMsg(AI.explain(err), 'louis');
         }
       }
-      if (status.textContent === 'Думаю…') status.textContent = '';
     } else {
-      await new Promise((r) => setTimeout(r, 400 + Math.random() * 300));
+      await new Promise((r) => setTimeout(r, 250 + Math.random() * 250));
     }
-    if (!res) res = simpleReply(text);
-
+    const res = simpleReply(text);
     look(0, 0);
     busy = false;
     if (bye) convo = false;
-    louisSays(res, () => { if (convo) listen(); });
+    louisSays(res, after);
   }
 
   $('inputBar').addEventListener('submit', (e) => {
@@ -411,11 +503,11 @@
 
   function snap() {
     if (!stream || !cam.videoWidth) return null;
-    const scale = Math.min(1, 640 / Math.max(cam.videoWidth, cam.videoHeight));
+    const scale = Math.min(1, 448 / Math.max(cam.videoWidth, cam.videoHeight));
     canvas.width = Math.round(cam.videoWidth * scale);
     canvas.height = Math.round(cam.videoHeight * scale);
     canvas.getContext('2d').drawImage(cam, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL('image/jpeg', 0.75).split(',')[1];
+    return canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
   }
 
   /* ---------- Настройки ---------- */
@@ -431,8 +523,42 @@
   $('btnSettings').addEventListener('click', () => {
     keyInput.value = AI.key();
     showKeyStatus(AI.hasKey() ? 'Ключ сохранён, Луи умный. Модель: ' + AI.models()[0] : 'Ключ не задан, Луи отвечает простыми фразами.', AI.hasKey() ? 'ok' : '');
+    pickVoice();
+    showVoiceVals();
     if (dlg.showModal) dlg.showModal(); else dlg.setAttribute('open', '');
   });
+
+  /* выбор голоса */
+  function fillVoiceSelect() {
+    const sel = $('voiceSel');
+    if (!sel) return;
+    const voices = ruVoices().slice().sort((a, b) => voiceQuality(b) - voiceQuality(a));
+    sel.innerHTML = '';
+    if (!voices.length) {
+      sel.add(new Option('Русские голоса не найдены', ''));
+      return;
+    }
+    voices.forEach((v) => {
+      const q = voiceQuality(v);
+      const mark = q >= 3 ? ' ★★' : q === 2 ? ' ★' : '';
+      sel.add(new Option(v.name + mark, v.voiceURI, false, ruVoice && v.voiceURI === ruVoice.voiceURI));
+    });
+  }
+  function showVoiceVals() {
+    $('pitch').value = voiceCfg.pitch;
+    $('rate').value = voiceCfg.rate;
+    $('pitchVal').textContent = Number(voiceCfg.pitch).toFixed(2);
+    $('rateVal').textContent = Number(voiceCfg.rate).toFixed(2);
+  }
+  $('voiceSel').addEventListener('change', (e) => {
+    voiceCfg.uri = e.target.value;
+    store.set('voiceURI', voiceCfg.uri);
+    pickVoice();
+    say('Привет! Теперь я говорю вот так.');
+  });
+  $('pitch').addEventListener('input', (e) => { voiceCfg.pitch = parseFloat(e.target.value); store.set('pitch', voiceCfg.pitch); showVoiceVals(); });
+  $('rate').addEventListener('input', (e) => { voiceCfg.rate = parseFloat(e.target.value); store.set('rate', voiceCfg.rate); showVoiceVals(); });
+  $('btnTryVoice').addEventListener('click', () => say('Привет! Я Луи. Мне очень нравится с тобой болтать.'));
 
   $('btnSaveKey').addEventListener('click', async () => {
     const k = keyInput.value.trim();

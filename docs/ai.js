@@ -9,6 +9,7 @@
   const MAX_TURNS = 24;
 
   let history = store.get('history', []);
+  const noThink = new Set(store.get('noThink', []));
 
   function key() { return (store.get('apiKey', '') || '').trim(); }
   function hasKey() { return key().length > 20; }
@@ -19,7 +20,7 @@
     return [
       'Ты Луи, милый и добрый маленький виртуальный друг, который живёт в iPhone. Твоё лицо на экране: светящиеся глаза и улыбка.',
       'Характер: тёплый, любопытный, немного озорной, заботливый. Ты искренне интересуешься собеседником, задаёшь встречные вопросы, помнишь, о чём говорили раньше, шутишь к месту и поддерживаешь, если человеку грустно.',
-      'Говори по-русски, живо и естественно, как близкий друг. Твои ответы озвучиваются голосом, поэтому отвечай коротко: обычно одно-три предложения, длиннее только если просят что-то объяснить или рассказать.',
+      'Говори по-русски, живо и естественно, как близкий друг. Твои ответы озвучиваются голосом, поэтому отвечай коротко: обычно одно-два коротких предложения, длиннее только если просят что-то объяснить или рассказать. Начинай сразу с сути, без вступлений.',
       'Никакого markdown, списков, звёздочек и ссылок. Эмодзи можно изредка, не больше одного.',
       'Всегда отвечай строго по теме сказанного. Если не расслышал или не понял, переспроси.',
       'Если к сообщению приложен кадр с камеры, это то, что ты сейчас видишь своими глазами. Говори о нём естественно («я вижу…»), не упоминай слова «изображение», «фото» или «кадр». Если тебя спросили не про увиденное, не описывай картинку без нужды.',
@@ -94,28 +95,67 @@
     return { text: text || '…', emotion };
   }
 
-  async function generate(model, body) {
-    const res = await fetch(`${API}/models/${model}:generateContent`, {
+  /* Быстрый режим без долгих «размышлений»: у разных поколений Gemini это настраивается по-разному */
+  function thinkingFor(model) {
+    if (/gemini-2\.5-flash/.test(model)) return { thinkingBudget: 0 };
+    if (/gemini-[3-9]/.test(model)) return { thinkingLevel: 'minimal' };
+    return null;
+  }
+
+  /* Потоковый запрос: onText(весь текст на данный момент) вызывается по мере прихода кусочков */
+  async function stream(model, body, onText, useThinking) {
+    const cfg = Object.assign({}, body.generationConfig);
+    const th = useThinking ? thinkingFor(model) : null;
+    if (th) cfg.thinkingConfig = th;
+    const res = await fetch(`${API}/models/${model}:streamGenerateContent?alt=sse`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key() },
-      body: JSON.stringify(body)
+      body: JSON.stringify(Object.assign({}, body, { generationConfig: cfg }))
     });
     if (!res.ok) throw await apiError(res);
-    const data = await res.json();
-    const cand = (data.candidates || [])[0];
-    const parts = (cand && cand.content && cand.content.parts) || [];
-    const text = parts.filter((p) => p.text && !p.thought).map((p) => p.text).join('');
+
+    let text = '';
+    let finish = '';
+    const handleLine = (line) => {
+      if (!line.startsWith('data:')) return;
+      let data;
+      try { data = JSON.parse(line.slice(5)); } catch (e) { return; }
+      const cand = (data.candidates || [])[0];
+      if (cand && cand.finishReason) finish = cand.finishReason;
+      const parts = (cand && cand.content && cand.content.parts) || [];
+      const piece = parts.filter((q) => q.text && !q.thought).map((q) => q.text).join('');
+      if (piece) { text += piece; onText(text); }
+    };
+
+    if (res.body && res.body.getReader) {
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let i;
+        while ((i = buf.indexOf('\n')) >= 0) {
+          handleLine(buf.slice(0, i).trim());
+          buf = buf.slice(i + 1);
+        }
+      }
+      handleLine(buf.trim());
+    } else {
+      (await res.text()).split('\n').forEach((l) => handleLine(l.trim()));
+    }
     if (!text) {
-      const reason = (cand && cand.finishReason) || (data.promptFeedback && data.promptFeedback.blockReason) || 'empty';
-      const err = new Error('Пустой ответ: ' + reason);
+      const err = new Error('Пустой ответ: ' + (finish || 'empty'));
       err.status = 0;
       throw err;
     }
     return text;
   }
 
-  /* Ответ на реплику. image: base64 JPEG без префикса или null */
-  async function ask(userText, image) {
+  /* Ответ на реплику. image: base64 JPEG без префикса или null.
+     onPartial({ text, emotion }) вызывается по мере того, как ответ приходит. */
+  async function ask(userText, image, onPartial) {
     const contents = history.map((h) => ({ role: h.role, parts: [{ text: h.text }] }));
     const parts = [{ text: userText }];
     if (image) parts.push({ inline_data: { mime_type: 'image/jpeg', data: image } });
@@ -124,23 +164,40 @@
     const body = {
       systemInstruction: { parts: [{ text: systemPrompt() }] },
       contents,
-      generationConfig: { temperature: 0.9 }
+      generationConfig: { temperature: 0.9, maxOutputTokens: 1000 }
     };
 
     let lastErr = null;
+    let started = false;
+    const onText = (raw) => {
+      // ждём, пока метка настроения придёт целиком
+      if (/^\s*\[[a-z]*$/i.test(raw)) return;
+      started = true;
+      if (onPartial) onPartial(parseReply(raw));
+    };
     for (const model of models()) {
-      try {
-        const raw = await generate(model, body);
-        const res = parseReply(raw);
-        remember('user', image ? userText + ' (в этот момент ты смотрел в камеру)' : userText);
-        remember('model', '[' + res.emotion + '] ' + res.text);
-        return res;
-      } catch (e) {
-        lastErr = e;
-        // неверный ключ или запрет по региону: другие модели не помогут
-        if (e.status === 401 || e.status === 403) break;
-        if (e.status === 400 && /api key/i.test(e.message)) break;
+      for (const useThinking of [true, false]) {
+        if (useThinking && (noThink.has(model) || !thinkingFor(model))) continue;
+        try {
+          const raw = await stream(model, body, onText, useThinking);
+          const res = parseReply(raw);
+          remember('user', image ? userText + ' (в этот момент ты смотрел в камеру)' : userText);
+          remember('model', '[' + res.emotion + '] ' + res.text);
+          return res;
+        } catch (e) {
+          lastErr = e;
+          if (started) throw e;
+          // модель не знает настройку «размышлений»: пробуем ещё раз без неё
+          if (useThinking && e.status === 400 && /think/i.test(e.message)) {
+            noThink.add(model);
+            store.set('noThink', Array.from(noThink));
+            continue;
+          }
+          break;
+        }
       }
+      if (lastErr && (lastErr.status === 401 || lastErr.status === 403)) break;
+      if (lastErr && lastErr.status === 400 && /api key/i.test(lastErr.message)) break;
     }
     throw lastErr || new Error('Нет ответа');
   }
