@@ -44,6 +44,9 @@
   let listening = false;
   let busy = false;
   let lastLouisText = '';
+  let recentLouis = [];
+  let speechEndedAt = 0;
+  function rememberLouis(t) { recentLouis = recentLouis.filter((x) => x !== t).concat([t]).slice(-4); }
   let lastTiming = '';
 
   function setEmotion(e, holdMs) {
@@ -142,6 +145,7 @@
     }, 150 + Math.random() * 60);
   }
   function stopTalking() {
+    if (speaking) speechEndedAt = Date.now();
     speaking = false;
     clearInterval(talkAnim);
     mouth.setAttribute('d', MOUTHS[emotion]);
@@ -238,7 +242,7 @@
   }
 
   function louisSays(res, done) {
-    lastLouisText = res.text;
+    lastLouisText = res.text; rememberLouis(res.text);
     addMsg(res.text, 'louis');
     setEmotion(res.emotion || 'neutral', res.emotion === 'sleepy' ? 0 : 6000);
     if (res.bounce || res.emotion === 'love') bounce();
@@ -275,7 +279,7 @@
     const wantsTimer = /(таймер|засеки|напомни.*через|разбуди.*через)/.test(t);
     const bye = /^(пока|до свидания|спокойной ночи|хватит|стоп)/.test(t);
 
-    const after = () => { if (convo) setTimeout(listen, 600); };
+    const after = () => { if (convo) setTimeout(listen, 900); };
     if (AI.hasKey() && !wantsTimer) {
       status.textContent = 'Думаю…';
       let bubble = null;
@@ -324,7 +328,7 @@
         });
         if (!bubble) bubble = addMsg('', 'louis');
         bubble.textContent = res.text;
-        lastLouisText = res.text;
+        lastLouisText = res.text; rememberLouis(res.text);
         lastTiming = `Последний ответ: Google начал отвечать через ${((firstAt - t0) / 1000).toFixed(1)} с${image ? ' (с кадром камеры)' : ''}, модель ${AI.models()[0]}`;
         feed(res.text, true);
         setEmotion(res.emotion, 6000);
@@ -419,19 +423,27 @@
 
   /* Похоже ли услышанное на то, что только что сказал сам Луи (эхо из динамика) */
   function isEcho(text) {
-    if (!lastLouisText) return false;
-    const words = (x) => x.toLowerCase().replace(/ё/g, 'е').replace(/[^а-яa-z0-9\s]/g, ' ').split(/\s+/).filter((w) => w.length > 2);
+    if (!recentLouis.length) return false;
+    const norm = (x) => x.toLowerCase().replace(/ё/g, 'е').replace(/[^а-яa-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+    const words = (x) => norm(x).split(' ').filter((w) => w.length > 2);
+    const heardNorm = norm(text);
     const heard = words(text);
-    if (!heard.length) return false;
-    const said = new Set(words(lastLouisText));
-    const hit = heard.filter((w) => said.has(w)).length;
-    return hit / heard.length >= 0.6;
+    for (const said of recentLouis) {
+      const saidNorm = norm(said);
+      // услышанное целиком входит в то, что Луи сказал (обрывок его фразы)
+      if (heardNorm.length >= 6 && saidNorm.includes(heardNorm)) return true;
+      if (!heard.length) continue;
+      const set = new Set(words(said));
+      const hit = heard.filter((w) => set.has(w)).length;
+      if (heard.length >= 2 && hit / heard.length >= 0.5) return true;
+    }
+    return false;
   }
 
   function listen() {
     if (!convo || listening || busy) return;
     // не включаем микрофон, пока Луи ещё говорит, иначе он услышит сам себя
-    if (speaking || ('speechSynthesis' in window && speechSynthesis.speaking)) { setTimeout(listen, 300); return; }
+    if (speaking || ('speechSynthesis' in window && speechSynthesis.speaking) || Date.now() - speechEndedAt < 800) { setTimeout(listen, 300); return; }
     rec = new SR();
     rec.lang = 'ru-RU';
     rec.interimResults = true;

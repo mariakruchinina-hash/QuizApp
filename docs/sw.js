@@ -1,5 +1,5 @@
 /* Офлайн-кэш: после первого открытия Луи работает без интернета. */
-const CACHE = 'louis-v5';
+const CACHE = 'louis-v6';
 const FILES = ['./', 'index.html', 'style.css', 'brain.js', 'ai.js', 'app.js', 'manifest.webmanifest',
   'icon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
 
