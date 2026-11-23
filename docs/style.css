@@ -163,3 +163,44 @@ button { font: inherit; color: inherit; cursor: pointer; }
 @media (orientation: landscape) and (max-height: 500px) {
   .face-wrap { height: 45dvh; }
 }
+
+/* ---------- Кнопки, камера, настройки ---------- */
+.tb-group { display: flex; gap: 6px; }
+.icon-btn.on { background: rgba(126, 240, 214, .28); }
+.badge {
+  font-size: 11px; font-weight: 600; padding: 2px 6px; border-radius: 6px; margin-left: 4px;
+  background: rgba(255,255,255,.12); color: #bfefff; vertical-align: 2px;
+}
+.badge:empty { display: none; }
+
+.cam {
+  display: none; position: absolute; top: 10px; right: 12px;
+  width: 72px; height: 96px; object-fit: cover; border-radius: 14px;
+  transform: scaleX(-1); border: 2px solid rgba(191,239,255,.5); background: #000;
+}
+.cam.on { display: block; }
+.app.face-only .cam { width: 90px; height: 120px; }
+
+.settings {
+  width: min(92vw, 460px); max-height: 88dvh; border: 0; border-radius: 20px; padding: 0;
+  background: var(--surface); color: var(--text);
+}
+.settings::backdrop { background: rgba(10, 10, 20, .55); }
+.settings form { padding: 18px 18px 14px; display: flex; flex-direction: column; gap: 10px; }
+.settings h2 { margin: 0; font-size: 20px; }
+.settings .hint { margin: 0; color: var(--muted); font-size: 15px; }
+.settings ol.hint { padding-left: 20px; }
+.settings .small { font-size: 13px; }
+.settings a { color: var(--accent); }
+.settings input {
+  height: 44px; border-radius: 12px; border: 1px solid var(--border); background: var(--bg); color: var(--text);
+  padding: 0 12px; font-size: 16px;
+}
+.settings .row { display: flex; gap: 8px; }
+.settings .row button {
+  flex: 1; height: 42px; border-radius: 12px; border: 1px solid var(--border); background: var(--bg);
+}
+.settings .row button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.key-status { margin: 0; font-size: 14px; min-height: 1em; }
+.key-status.ok { color: #1f9d6b; }
+.key-status.err { color: #d64561; }

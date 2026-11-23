@@ -1,6 +1,6 @@
 /* Офлайн-кэш: после первого открытия Луи работает без интернета. */
-const CACHE = 'louis-v1';
-const FILES = ['./', 'index.html', 'style.css', 'brain.js', 'app.js', 'manifest.webmanifest',
+const CACHE = 'louis-v2';
+const FILES = ['./', 'index.html', 'style.css', 'brain.js', 'ai.js', 'app.js', 'manifest.webmanifest',
   'icon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', (e) => {
@@ -13,6 +13,8 @@ self.addEventListener('activate', (e) => {
 });
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
+  // запросы к нейросети и прочим сайтам не кэшируем
+  if (new URL(e.request.url).origin !== self.location.origin) return;
   // сначала сеть (чтобы получать обновления), при её отсутствии берём из кэша
   e.respondWith(
     fetch(e.request)

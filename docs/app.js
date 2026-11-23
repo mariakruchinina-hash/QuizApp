@@ -1,7 +1,8 @@
 (function () {
   'use strict';
 
-  const { reply, greeting, store, pick } = window.LouisBrain;
+  const { reply: simpleReply, greeting, store, pick } = window.LouisBrain;
+  const AI = window.LouisAI;
 
   const $ = (id) => document.getElementById(id);
   const app = $('app');
@@ -17,6 +18,9 @@
   const btnFaceMic = $('btnFaceMic');
   const btnSound = $('btnSound');
   const btnFace = $('btnFace');
+  const btnCam = $('btnCam');
+  const cam = $('cam');
+  const badge = $('brainBadge');
 
   /* ---------- Лицо и эмоции ---------- */
   const MOUTHS = {
@@ -38,6 +42,7 @@
   let sleeping = false;
   let speaking = false;
   let listening = false;
+  let busy = false;
 
   function setEmotion(e, holdMs) {
     if (!EMOTIONS.includes(e)) e = 'neutral';
@@ -46,9 +51,7 @@
     emotion = e;
     if (!speaking) mouth.setAttribute('d', MOUTHS[e]);
     clearTimeout(emotionTimer);
-    if (holdMs && e !== 'sleepy') {
-      emotionTimer = setTimeout(() => setEmotion('neutral'), holdMs);
-    }
+    if (holdMs && e !== 'sleepy') emotionTimer = setTimeout(() => setEmotion(listening ? 'listening' : 'neutral'), holdMs);
   }
 
   function blink() {
@@ -64,7 +67,7 @@
 
   function look(x, y) { gaze.style.transform = `translate(${x}px, ${y}px)`; }
   (function wanderLoop() {
-    if (!sleeping && !listening && Math.random() < 0.6) {
+    if (!sleeping && !listening && !busy && Math.random() < 0.6) {
       look(Math.round((Math.random() - 0.5) * 40), Math.round((Math.random() - 0.5) * 18));
       setTimeout(() => { if (!listening) look(0, 0); }, 900 + Math.random() * 1200);
     }
@@ -80,6 +83,7 @@
   /* сон после долгой тишины */
   let idleTimer = null;
   function goSleep() {
+    if (convo) return;
     sleeping = true;
     setEmotion('sleepy');
     status.textContent = 'Луи дремлет. Коснись, чтобы разбудить';
@@ -134,10 +138,18 @@
       .replace(/[«»()]/g, '');
   }
 
-  function say(text) {
+  /* say(text, done): done вызывается, когда Луи договорил */
+  function say(text, done) {
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      stopTalking();
+      if (done) done();
+    };
     if (!soundOn || !('speechSynthesis' in window)) {
       startTalking();
-      setTimeout(stopTalking, Math.min(4000, 400 + text.length * 35));
+      setTimeout(finish, Math.min(5000, 400 + text.length * 40));
       return;
     }
     speechSynthesis.cancel();
@@ -147,11 +159,14 @@
     u.pitch = 1.45;
     u.rate = 1.03;
     u.onstart = startTalking;
-    u.onend = stopTalking;
-    u.onerror = stopTalking;
+    u.onend = finish;
+    u.onerror = finish;
     speechSynthesis.speak(u);
-    // на случай, если iOS не прислал onend
-    setTimeout(() => { if (speaking && !speechSynthesis.speaking) stopTalking(); }, 15000);
+    // страховка, если iOS не прислал onend
+    const guard = setInterval(() => {
+      if (finished) { clearInterval(guard); return; }
+      if (!speechSynthesis.speaking && !speechSynthesis.pending) { clearInterval(guard); finish(); }
+    }, 700);
   }
 
   function renderSound() { btnSound.textContent = soundOn ? '🔊' : '🔇'; }
@@ -175,35 +190,65 @@
     if (msgs.length > 120) msgs[0].remove();
   }
 
-  function louisSays(res) {
+  function louisSays(res, done) {
     addMsg(res.text, 'louis');
-    setEmotion(res.emotion || 'neutral', res.emotion === 'sleepy' ? 0 : 5000);
+    setEmotion(res.emotion || 'neutral', res.emotion === 'sleepy' ? 0 : 6000);
     if (res.bounce || res.emotion === 'love') bounce();
     if (app.classList.contains('face-only')) status.textContent = res.text;
-    say(res.text);
+    say(res.text, done);
     if (res.sleep) setTimeout(goSleep, 4000);
     if (res.timer) {
       setTimeout(() => {
         wake();
-        const msg = { text: res.timer.message, emotion: 'surprised', bounce: true };
-        louisSays(msg);
+        louisSays({ text: res.timer.message, emotion: 'surprised', bounce: true });
         if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
       }, res.timer.ms);
     }
   }
 
-  function handle(text) {
+  function updateBadge() { badge.textContent = AI.hasKey() ? 'ИИ' : ''; }
+  updateBadge();
+
+  let aiWarned = false;
+
+  async function handle(text) {
     text = text.trim();
-    if (!text) return;
+    if (!text || busy) return;
+    busy = true;
     wake();
     poke();
     addMsg(text, 'me');
     setEmotion('thinking');
     look(0, -6);
-    setTimeout(() => {
-      look(0, 0);
-      louisSays(reply(text));
-    }, 450 + Math.random() * 400);
+
+    const t = text.toLowerCase().replace(/ё/g, 'е');
+    const nameMatch = t.match(/(?:меня зовут|зови меня|мое имя)\s+([а-яa-z-]{2,20})/);
+    if (nameMatch) store.set('name', nameMatch[1].charAt(0).toUpperCase() + nameMatch[1].slice(1));
+    const wantsTimer = /(таймер|засеки|напомни.*через|разбуди.*через)/.test(t);
+    const bye = /^(пока|до свидания|спокойной ночи|хватит|стоп)/.test(t);
+
+    let res = null;
+    if (AI.hasKey() && !wantsTimer) {
+      status.textContent = 'Думаю…';
+      try {
+        res = await AI.ask(text, snap());
+        aiWarned = false;
+      } catch (err) {
+        if (!aiWarned) {
+          aiWarned = true;
+          addMsg(AI.explain(err), 'louis');
+        }
+      }
+      if (status.textContent === 'Думаю…') status.textContent = '';
+    } else {
+      await new Promise((r) => setTimeout(r, 400 + Math.random() * 300));
+    }
+    if (!res) res = simpleReply(text);
+
+    look(0, 0);
+    busy = false;
+    if (bye) convo = false;
+    louisSays(res, () => { if (convo) listen(); });
   }
 
   $('inputBar').addEventListener('submit', (e) => {
@@ -219,9 +264,10 @@
 
   /* касание лица */
   faceWrap.addEventListener('click', (e) => {
-    if (e.target.closest('button')) return;
+    if (e.target.closest('button') || e.target === cam || busy) return;
     poke();
     if (wake()) { louisSays({ text: pick(['Ой, я задремал! Привет!', 'М-м? Я тут, я не спал!']), emotion: 'happy' }); return; }
+    if (listening) return;
     const r = face.getBoundingClientRect();
     look(Math.round(((e.clientX - r.left) / r.width - 0.5) * 50), Math.round(((e.clientY - r.top) / r.height - 0.5) * 24));
     const lines = [
@@ -233,19 +279,85 @@
     louisSays({ text, emotion: emo });
   });
 
-  /* ---------- Распознавание речи (встроено в Safari) ---------- */
+  /* ---------- Постоянный диалог: слушает → отвечает → снова слушает ---------- */
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   let rec = null;
+  let convo = false;
+  let silentRounds = 0;
 
   function setListening(on) {
     listening = on;
-    btnMic.classList.toggle('on', on);
-    btnFaceMic.classList.toggle('on', on);
     if (on) { setEmotion('listening'); look(0, -4); status.textContent = 'Слушаю…'; }
-    else { if (emotion === 'listening') setEmotion('neutral'); look(0, 0); if (status.textContent === 'Слушаю…') status.textContent = ''; }
+    else {
+      if (emotion === 'listening') setEmotion('neutral');
+      look(0, 0);
+      if (/^Слушаю/.test(status.textContent)) status.textContent = '';
+    }
+  }
+  function renderMic() {
+    btnMic.classList.toggle('on', convo);
+    btnFaceMic.classList.toggle('on', convo);
+    btnMic.textContent = convo ? '⏹' : '🎤';
+    btnFaceMic.textContent = convo ? '⏹' : '🎤';
   }
 
-  function startListening() {
+  function stopConvo(msg) {
+    convo = false;
+    renderMic();
+    if (rec) { try { rec.abort(); } catch (e) { /* ignore */ } }
+    setListening(false);
+    if (msg) status.textContent = msg;
+  }
+
+  function listen() {
+    if (!convo || listening || busy) return;
+    if ('speechSynthesis' in window) speechSynthesis.cancel();
+    rec = new SR();
+    rec.lang = 'ru-RU';
+    rec.interimResults = true;
+    rec.continuous = false;
+    rec.maxAlternatives = 1;
+    let finalText = '';
+    let denied = false;
+
+    rec.onresult = (ev) => {
+      let interim = '';
+      for (let i = ev.resultIndex; i < ev.results.length; i++) {
+        const r = ev.results[i];
+        if (r.isFinal) finalText += r[0].transcript;
+        else interim += r[0].transcript;
+      }
+      status.textContent = 'Слушаю… ' + (finalText + interim).trim();
+    };
+    rec.onerror = (ev) => {
+      if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') denied = true;
+    };
+    rec.onend = () => {
+      setListening(false);
+      if (denied) {
+        stopConvo();
+        louisSays({ text: 'Мне не дали включить микрофон. Нажми 🎤 ещё раз, а если не выйдет, разреши микрофон для Safari в Настройках iPhone или пользуйся диктовкой на клавиатуре.', emotion: 'sad' });
+        return;
+      }
+      const text = finalText.trim();
+      if (text) {
+        silentRounds = 0;
+        handle(text);
+      } else if (convo) {
+        silentRounds++;
+        if (silentRounds >= 6) stopConvo('Я замолчал, чтобы не мешать. Нажми 🎤, чтобы поболтать');
+        else setTimeout(listen, 250);
+      }
+    };
+    try {
+      rec.start();
+      setListening(true);
+    } catch (err) {
+      stopConvo('Нажми 🎤, чтобы я снова слушал');
+    }
+  }
+
+  function toggleConvo() {
     wake();
     poke();
     if (!SR) {
@@ -253,35 +365,101 @@
       if (!app.classList.contains('face-only')) input.focus();
       return;
     }
-    if (listening) { rec && rec.stop(); return; }
-    if ('speechSynthesis' in window) speechSynthesis.cancel();
-    rec = new SR();
-    rec.lang = 'ru-RU';
-    rec.interimResults = false;
-    rec.continuous = false;
-    rec.maxAlternatives = 1;
-    let got = false;
-    rec.onresult = (ev) => {
-      got = true;
-      const text = ev.results[0][0].transcript;
-      setListening(false);
-      handle(text);
-    };
-    rec.onerror = (ev) => {
-      setListening(false);
-      if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
-        louisSays({ text: 'Мне нужен доступ к микрофону. Разреши его в Настройках, или используй диктовку на клавиатуре 🎙', emotion: 'sad' });
-      } else if (ev.error === 'no-speech') {
-        status.textContent = 'Я ничего не услышал';
-        setTimeout(() => { if (status.textContent === 'Я ничего не услышал') status.textContent = ''; }, 2500);
-      }
-    };
-    rec.onend = () => { if (!got) setListening(false); };
-    try { rec.start(); setListening(true); }
-    catch (err) { setListening(false); }
+    if (convo) { stopConvo(); return; }
+    convo = true;
+    silentRounds = 0;
+    renderMic();
+    if (!busy) listen();
   }
-  btnMic.addEventListener('click', startListening);
-  btnFaceMic.addEventListener('click', startListening);
+  btnMic.addEventListener('click', toggleConvo);
+  btnFaceMic.addEventListener('click', toggleConvo);
+
+  /* ---------- Камера: глаза Луи ---------- */
+  let stream = null;
+  const canvas = document.createElement('canvas');
+
+  async function toggleCam() {
+    if (stream) {
+      stream.getTracks().forEach((tr) => tr.stop());
+      stream = null;
+      cam.srcObject = null;
+      cam.classList.remove('on');
+      btnCam.classList.remove('on');
+      return;
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      louisSays({ text: 'Тут у меня нет доступа к камере.', emotion: 'sad' });
+      return;
+    }
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: false
+      });
+      cam.srcObject = stream;
+      await cam.play().catch(() => {});
+      cam.classList.add('on');
+      btnCam.classList.add('on');
+      if (AI.hasKey()) louisSays({ text: 'Ой, теперь я тебя вижу! 👀', emotion: 'surprised' });
+      else louisSays({ text: 'Камера включена, но чтобы понимать, что я вижу, мне нужен ключ. Открой ⚙️ настройки.', emotion: 'shy' });
+    } catch (err) {
+      stream = null;
+      louisSays({ text: 'Не получилось включить камеру. Разреши доступ к камере для Safari в Настройках iPhone.', emotion: 'sad' });
+    }
+  }
+  btnCam.addEventListener('click', toggleCam);
+
+  function snap() {
+    if (!stream || !cam.videoWidth) return null;
+    const scale = Math.min(1, 640 / Math.max(cam.videoWidth, cam.videoHeight));
+    canvas.width = Math.round(cam.videoWidth * scale);
+    canvas.height = Math.round(cam.videoHeight * scale);
+    canvas.getContext('2d').drawImage(cam, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/jpeg', 0.75).split(',')[1];
+  }
+
+  /* ---------- Настройки ---------- */
+  const dlg = $('settings');
+  const keyInput = $('apiKey');
+  const keyStatus = $('keyStatus');
+
+  function showKeyStatus(text, cls) {
+    keyStatus.textContent = text;
+    keyStatus.className = 'key-status ' + (cls || '');
+  }
+
+  $('btnSettings').addEventListener('click', () => {
+    keyInput.value = AI.key();
+    showKeyStatus(AI.hasKey() ? 'Ключ сохранён, Луи умный. Модель: ' + AI.models()[0] : 'Ключ не задан, Луи отвечает простыми фразами.', AI.hasKey() ? 'ok' : '');
+    if (dlg.showModal) dlg.showModal(); else dlg.setAttribute('open', '');
+  });
+
+  $('btnSaveKey').addEventListener('click', async () => {
+    const k = keyInput.value.trim();
+    if (k.length < 20) { showKeyStatus('Это не похоже на ключ. Он длинный и начинается с AIza…', 'err'); return; }
+    showKeyStatus('Проверяю ключ…');
+    try {
+      const model = await AI.setup(k);
+      showKeyStatus('Готово! Луи теперь умный. Модель: ' + model, 'ok');
+      updateBadge();
+    } catch (err) {
+      showKeyStatus(AI.explain(err).replace(/ ?А пока.*$| ?Пока поболтаю.*$| ?Пока отвечу.*$/, ''), 'err');
+      updateBadge();
+    }
+  });
+
+  $('btnRemoveKey').addEventListener('click', () => {
+    store.set('apiKey', '');
+    store.set('models', []);
+    keyInput.value = '';
+    showKeyStatus('Ключ удалён. Луи отвечает простыми фразами.');
+    updateBadge();
+  });
+
+  $('btnForget').addEventListener('click', () => {
+    AI.forget();
+    showKeyStatus('Готово, я начну разговор с чистого листа.', 'ok');
+  });
 
   /* ---------- Режим подставки: только лицо, экран не гаснет ---------- */
   let wakeLock = null;
@@ -292,7 +470,7 @@
     } catch (e) { /* не поддерживается */ }
   }
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && app.classList.contains('face-only')) keepAwake(true);
+    if (document.visibilityState === 'visible' && (app.classList.contains('face-only') || convo)) keepAwake(true);
   });
 
   function setFaceOnly(on) {
@@ -312,6 +490,10 @@
     addMsg(g.text, 'louis');
     setEmotion(g.emotion, 4000);
     bounce();
+    if (!AI.hasKey() && !store.get('keyHintShown', false)) {
+      store.set('keyHintShown', true);
+      setTimeout(() => addMsg('Подсказка: чтобы я стал по-настоящему умным и видел камеру, нажми ⚙️ вверху и добавь бесплатный ключ Google. Это займёт пару минут.', 'louis'), 900);
+    }
   }, 400);
   poke();
 

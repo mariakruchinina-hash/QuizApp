@@ -18,9 +18,15 @@
 <body>
   <main id="app" class="app">
     <header class="topbar">
-      <button id="btnSound" class="icon-btn" aria-label="Звук" title="Звук">🔊</button>
-      <div class="title">Луи</div>
-      <button id="btnFace" class="icon-btn" aria-label="Режим лица" title="Режим подставки: только лицо">⤢</button>
+      <div class="tb-group">
+        <button id="btnSound" class="icon-btn" aria-label="Звук" title="Звук">🔊</button>
+        <button id="btnSettings" class="icon-btn" aria-label="Настройки" title="Настройки">⚙️</button>
+      </div>
+      <div class="title">Луи <span id="brainBadge" class="badge"></span></div>
+      <div class="tb-group">
+        <button id="btnCam" class="icon-btn" aria-label="Камера" title="Луи видит камеру">👁</button>
+        <button id="btnFace" class="icon-btn" aria-label="Режим лица" title="Режим подставки: только лицо">⤢</button>
+      </div>
     </header>
 
     <section id="faceWrap" class="face-wrap" aria-label="Лицо Луи">
@@ -58,6 +64,7 @@
         <path id="mouth" class="mouth" d="M180 200 Q200 215 220 200"/>
         <text id="zzz" class="zzz" x="330" y="50">z</text>
       </svg>
+      <video id="cam" class="cam" playsinline muted autoplay></video>
       <div id="status" class="status" aria-live="polite"></div>
       <button type="button" id="btnFaceMic" class="face-mic" aria-label="Сказать голосом">🎤</button>
     </section>
@@ -81,7 +88,31 @@
     </form>
   </main>
 
+  <dialog id="settings" class="settings">
+    <form method="dialog" id="settingsForm">
+      <h2>Настройки Луи</h2>
+      <p class="hint">Чтобы Луи стал умным и видел камеру, ему нужен бесплатный ключ Google Gemini.</p>
+      <ol class="hint">
+        <li>Открой <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> и войди в Google-аккаунт.</li>
+        <li>Нажми «Create API key», затем скопируй ключ.</li>
+        <li>Вставь его сюда и нажми «Сохранить».</li>
+      </ol>
+      <input id="apiKey" type="password" placeholder="Вставь ключ (начинается с AIza…)" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <p id="keyStatus" class="key-status"></p>
+      <p class="hint small">Ключ хранится только на этом телефоне и отправляется только в Google. Никому его не показывай. На бесплатном тарифе Google может использовать переписку для улучшения своих моделей.</p>
+      <div class="row">
+        <button type="button" id="btnSaveKey" class="primary">Сохранить</button>
+        <button type="button" id="btnRemoveKey">Удалить ключ</button>
+      </div>
+      <div class="row">
+        <button type="button" id="btnForget">Забыть разговор</button>
+        <button value="close">Закрыть</button>
+      </div>
+    </form>
+  </dialog>
+
   <script src="brain.js"></script>
+  <script src="ai.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
