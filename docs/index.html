@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <title>Луи</title>
+  <meta name="description" content="Луи, милый виртуальный собеседник">
+  <meta name="theme-color" content="#1b1d2a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Луи">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-180.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="app" class="app">
+    <header class="topbar">
+      <button id="btnSound" class="icon-btn" aria-label="Звук" title="Звук">🔊</button>
+      <div class="title">Луи</div>
+      <button id="btnFace" class="icon-btn" aria-label="Режим лица" title="Режим подставки: только лицо">⤢</button>
+    </header>
+
+    <section id="faceWrap" class="face-wrap" aria-label="Лицо Луи">
+      <svg id="face" class="face" viewBox="0 0 400 260" role="img" aria-label="Луи">
+        <defs>
+          <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="6" result="b"/>
+            <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+        </defs>
+        <g id="gaze">
+          <g class="eye-group" id="eyeL">
+            <g class="blink">
+              <rect class="eye" x="85" y="55" width="80" height="110" rx="38"/>
+              <path class="heart" d="M125 150 C 80 118, 82 70, 112 76 C 120 78, 125 86, 125 92 C 125 86, 130 78, 138 76 C 168 70, 170 118, 125 150 Z"/>
+              <circle class="shine" cx="142" cy="80" r="9"/>
+            </g>
+            <polygon class="lid-sad" points="70,40 180,40 180,48 70,96"/>
+            <polygon class="lid-angry" points="70,40 180,40 180,96 70,48"/>
+            <ellipse class="lid-happy" cx="125" cy="200" rx="70" ry="70"/>
+          </g>
+          <g class="eye-group" id="eyeR">
+            <g class="blink">
+              <rect class="eye" x="235" y="55" width="80" height="110" rx="38"/>
+              <path class="heart" d="M275 150 C 230 118, 232 70, 262 76 C 270 78, 275 86, 275 92 C 275 86, 280 78, 288 76 C 318 70, 320 118, 275 150 Z"/>
+              <circle class="shine" cx="292" cy="80" r="9"/>
+            </g>
+            <polygon class="lid-sad" points="220,40 330,40 330,96 220,48"/>
+            <polygon class="lid-angry" points="220,40 330,40 330,48 220,96"/>
+            <ellipse class="lid-happy" cx="275" cy="200" rx="70" ry="70"/>
+          </g>
+        </g>
+        <circle class="blush" cx="88" cy="190" r="20"/>
+        <circle class="blush" cx="312" cy="190" r="20"/>
+        <path id="mouth" class="mouth" d="M180 200 Q200 215 220 200"/>
+        <text id="zzz" class="zzz" x="330" y="50">z</text>
+      </svg>
+      <div id="status" class="status" aria-live="polite"></div>
+      <button type="button" id="btnFaceMic" class="face-mic" aria-label="Сказать голосом">🎤</button>
+    </section>
+
+    <section id="chat" class="chat" aria-label="Переписка" aria-live="polite"></section>
+
+    <div id="chips" class="chips">
+      <button>Привет!</button>
+      <button>Как дела?</button>
+      <button>Расскажи шутку</button>
+      <button>Загадай загадку</button>
+      <button>Мне грустно</button>
+      <button>Который час?</button>
+      <button>Что ты умеешь?</button>
+    </div>
+
+    <form id="inputBar" class="input-bar" autocomplete="off">
+      <button type="button" id="btnMic" class="mic" aria-label="Сказать голосом" title="Сказать голосом">🎤</button>
+      <input id="text" type="text" placeholder="Напиши Луи…" enterkeyhint="send" aria-label="Сообщение">
+      <button type="submit" class="send" aria-label="Отправить">➤</button>
+    </form>
+  </main>
+
+  <script src="brain.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

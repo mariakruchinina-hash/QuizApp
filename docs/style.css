@@ -1,0 +1,165 @@
+:root {
+  --face-bg: #1b1d2a;
+  --eye: #bfefff;
+  --eye-glow: rgba(140, 220, 255, .55);
+  --blush: #ff8fb1;
+  --heart: #ff6b9a;
+  --bg: #f6f4fb;
+  --surface: #ffffff;
+  --text: #1d1b26;
+  --muted: #6d6a7c;
+  --accent: #7b6cf6;
+  --accent-text: #ffffff;
+  --bubble-louis: #ece9fb;
+  --border: #e2def0;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121320;
+    --surface: #1e2031;
+    --text: #ecebf5;
+    --muted: #9a98ad;
+    --accent: #9184ff;
+    --bubble-louis: #262940;
+    --border: #2c2f45;
+  }
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 17px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  overscroll-behavior: none;
+}
+button { font: inherit; color: inherit; cursor: pointer; }
+
+.app {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 12px;
+  background: var(--face-bg);
+  color: #e8e9f5;
+}
+.title { font-weight: 600; letter-spacing: .5px; }
+.icon-btn {
+  width: 40px; height: 40px; border: 0; border-radius: 12px;
+  background: rgba(255,255,255,.08); color: #e8e9f5; font-size: 18px;
+}
+
+/* ---------- Лицо ---------- */
+.face-wrap {
+  position: relative;
+  background: var(--face-bg);
+  flex: 0 0 auto;
+  height: 38dvh;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 0 0 28px 28px;
+  overflow: hidden;
+  touch-action: manipulation;
+  transition: height .35s ease;
+}
+.face { width: min(92%, 520px); height: 100%; overflow: visible; }
+.status {
+  position: absolute; bottom: 10px; left: 0; right: 0;
+  text-align: center; color: #9fa3c2; font-size: 14px; min-height: 1em;
+}
+
+#gaze { transition: transform .35s ease; }
+.eye-group .blink { transform-box: fill-box; transform-origin: center; transition: transform .09s ease-in; }
+.eye-group.closed .blink { transform: scaleY(.08); }
+.eye { fill: var(--eye); filter: url(#glow); transition: all .25s ease; transform-box: fill-box; transform-origin: center; }
+.shine { fill: #ffffff; opacity: .85; transition: opacity .2s; }
+.heart { fill: var(--heart); opacity: 0; filter: url(#glow); transform-box: fill-box; transform-origin: center; }
+.lid-sad, .lid-angry, .lid-happy { fill: var(--face-bg); opacity: 0; transition: opacity .25s, transform .25s; transform-box: fill-box; }
+.blush { fill: var(--blush); opacity: 0; transition: opacity .4s; filter: blur(4px); }
+.mouth { fill: none; stroke: var(--eye); stroke-width: 7; stroke-linecap: round; stroke-linejoin: round; transition: d .25s ease; }
+.zzz { fill: #9fa3c2; font-size: 34px; font-weight: 700; opacity: 0; }
+
+/* эмоции */
+.face.happy .lid-happy { opacity: 1; }
+.face.happy .blush, .face.love .blush, .face.shy .blush { opacity: .55; }
+.face.sad .lid-sad { opacity: 1; }
+.face.angry .lid-angry { opacity: 1; }
+.face.surprised .eye { transform: scale(1.12); }
+.face.love .eye, .face.love .shine { opacity: 0; }
+.face.love .heart { opacity: 1; animation: beat .9s ease-in-out infinite; }
+.face.sleepy .blink { transform: scaleY(.1); }
+.face.sleepy .zzz { animation: zzz 2.4s ease-in-out infinite; }
+.face.listening .eye { transform: scale(1.06); }
+.face.thinking .eye { transform: scaleY(.85); }
+
+@keyframes beat { 0%,100% { transform: scale(1); } 50% { transform: scale(1.12); } }
+@keyframes zzz {
+  0% { opacity: 0; transform: translate(0,10px); }
+  40% { opacity: 1; }
+  100% { opacity: 0; transform: translate(18px,-30px); }
+}
+.face-wrap.bounce .face { animation: bounce .5s ease; }
+@keyframes bounce { 0%,100% { transform: translateY(0); } 35% { transform: translateY(-14px); } 65% { transform: translateY(4px); } }
+
+/* ---------- Чат ---------- */
+.chat {
+  flex: 1 1 auto; overflow-y: auto; padding: 14px 16px 6px;
+  display: flex; flex-direction: column; gap: 8px;
+  -webkit-overflow-scrolling: touch;
+}
+.msg {
+  max-width: 82%; padding: 9px 13px; border-radius: 18px;
+  white-space: pre-wrap; word-wrap: break-word;
+  animation: pop .22s ease-out;
+}
+.msg.louis { align-self: flex-start; background: var(--bubble-louis); border-bottom-left-radius: 6px; }
+.msg.me { align-self: flex-end; background: var(--accent); color: var(--accent-text); border-bottom-right-radius: 6px; }
+@keyframes pop { from { transform: scale(.92); opacity: 0; } to { transform: none; opacity: 1; } }
+
+.chips {
+  display: flex; gap: 8px; overflow-x: auto; padding: 6px 16px;
+  scrollbar-width: none;
+}
+.chips::-webkit-scrollbar { display: none; }
+.chips button {
+  flex: 0 0 auto; border: 1px solid var(--border); background: var(--surface);
+  border-radius: 999px; padding: 7px 13px; font-size: 15px; white-space: nowrap;
+}
+
+.input-bar {
+  display: flex; gap: 8px; align-items: center;
+  padding: 8px 12px 10px;
+}
+.input-bar input {
+  flex: 1; min-width: 0; height: 44px; border-radius: 22px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  padding: 0 16px; font-size: 17px; outline: none;
+}
+.input-bar input:focus { border-color: var(--accent); }
+.mic, .send {
+  width: 44px; height: 44px; border-radius: 50%; border: 0; flex: 0 0 auto; font-size: 19px;
+}
+.send { background: var(--accent); color: var(--accent-text); }
+.mic { background: var(--surface); border: 1px solid var(--border); }
+.mic.on { background: #ff5d73; border-color: #ff5d73; animation: pulse 1.2s infinite; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(255,93,115,.6); } 100% { box-shadow: 0 0 0 14px rgba(255,93,115,0); } }
+
+/* ---------- Режим подставки: только лицо ---------- */
+.app.face-only .chat, .app.face-only .chips, .app.face-only .input-bar { display: none; }
+.app.face-only .face-wrap { flex: 1 1 auto; height: auto; border-radius: 0; }
+.app.face-only .status { font-size: 18px; bottom: 90px; padding: 0 24px; color: #d6d8ee; }
+.face-mic {
+  display: none; position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%);
+  width: 60px; height: 60px; border-radius: 50%; border: 0; font-size: 26px;
+  background: rgba(255,255,255,.1);
+}
+.app.face-only .face-mic { display: block; }
+.face-mic.on { background: #ff5d73; animation: pulse 1.2s infinite; }
+
+@media (orientation: landscape) and (max-height: 500px) {
+  .face-wrap { height: 45dvh; }
+}
