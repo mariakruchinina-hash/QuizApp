@@ -103,14 +103,51 @@
   }
 
   /* Потоковый запрос: onText(весь текст на данный момент) вызывается по мере прихода кусочков */
+  const FIRST_TIMEOUT = 15000; // сколько ждём начала ответа
+  const IDLE_TIMEOUT = 12000;  // сколько ждём следующего кусочка
+  let current = null;          // текущий запрос, чтобы его можно было отменить
+
+  function cancel() {
+    if (current) { current.reason = 'cancel'; current.ctrl.abort(); }
+  }
+
   async function stream(model, body, onText, useThinking) {
     const cfg = Object.assign({}, body.generationConfig);
     const th = useThinking ? thinkingFor(model) : null;
     if (th) cfg.thinkingConfig = th;
+
+    const job = { ctrl: new AbortController(), reason: '' };
+    current = job;
+    let timer = null;
+    const arm = (ms) => {
+      clearTimeout(timer);
+      timer = setTimeout(() => { job.reason = 'timeout'; job.ctrl.abort(); }, ms);
+    };
+    const fail = (e) => {
+      if (job.reason) {
+        const err = new Error(job.reason === 'cancel' ? 'Отменено' : 'Google слишком долго не отвечает');
+        err.status = job.reason;
+        return err;
+      }
+      return e;
+    };
+    arm(FIRST_TIMEOUT);
+    try {
+      return await streamInner(model, body, cfg, onText, job, arm);
+    } catch (e) {
+      throw fail(e);
+    } finally {
+      clearTimeout(timer);
+      if (current === job) current = null;
+    }
+  }
+
+  async function streamInner(model, body, cfg, onText, job, arm) {
     const res = await fetch(`${API}/models/${model}:streamGenerateContent?alt=sse`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key() },
-      body: JSON.stringify(Object.assign({}, body, { generationConfig: cfg }))
+      body: JSON.stringify(Object.assign({}, body, { generationConfig: cfg })),
+      signal: job.ctrl.signal
     });
     if (!res.ok) throw await apiError(res);
 
@@ -134,6 +171,7 @@
       for (;;) {
         const { value, done } = await reader.read();
         if (done) break;
+        arm(IDLE_TIMEOUT);
         buf += dec.decode(value, { stream: true });
         let i;
         while ((i = buf.indexOf('\n')) >= 0) {
@@ -186,7 +224,7 @@
           return res;
         } catch (e) {
           lastErr = e;
-          if (started) throw e;
+          if (started || e.status === 'timeout' || e.status === 'cancel') throw e;
           // модель не знает настройку «размышлений»: пробуем ещё раз без неё
           if (useThinking && e.status === 400 && /think/i.test(e.message)) {
             noThink.add(model);
@@ -204,6 +242,8 @@
 
   function explain(err) {
     const m = (err && err.message) || '';
+    if (err && err.status === 'cancel') return 'Ладно, не буду думать. Спроси что-нибудь ещё!';
+    if (err && err.status === 'timeout') return 'Google слишком долго молчит, похоже, плохая связь или VPN. Пока отвечу попроще. Проверить связь можно в ⚙️.';
     if (err && err.status === 429) return 'Похоже, на сегодня бесплатный лимит умных ответов закончился. Пока поболтаю попроще, а завтра снова буду умным!';
     if (/location|region|country|not supported/i.test(m)) return 'Google не пускает меня из этой страны. Включи VPN, и я снова стану умным. А пока поболтаю попроще.';
     if ((err && (err.status === 400 || err.status === 401 || err.status === 403)) && /key|permission|denied/i.test(m)) return 'Кажется, ключ не подходит. Проверь его в настройках ⚙️. А пока поболтаю попроще.';
@@ -211,5 +251,21 @@
     return 'Что-то у меня в голове запуталось (' + m.slice(0, 80) + '). Пока отвечу попроще.';
   }
 
-  window.LouisAI = { hasKey, setup, ask, forget, explain, models, key };
+  /* Проверка связи: короткий запрос к каждой модели, с временем ответа */
+  async function ping() {
+    const lines = [];
+    for (const model of models().slice(0, 3)) {
+      const t0 = Date.now();
+      try {
+        const body = { contents: [{ role: 'user', parts: [{ text: 'Ответь одним словом: привет' }] }], generationConfig: { maxOutputTokens: 200 } };
+        const txt = await stream(model, body, () => {}, !noThink.has(model) && !!thinkingFor(model));
+        lines.push(`✅ ${model}: ${Date.now() - t0} мс («${txt.trim().slice(0, 20)}»)`);
+      } catch (e) {
+        lines.push(`❌ ${model}: ${e.status || ''} ${(e.message || String(e)).slice(0, 140)} (${Date.now() - t0} мс)`);
+      }
+    }
+    return lines.join('\n');
+  }
+
+  window.LouisAI = { hasKey, setup, ask, forget, explain, models, key, cancel, ping };
 })();

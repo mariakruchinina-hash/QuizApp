@@ -214,3 +214,5 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .settings .slider input { flex: 1; accent-color: var(--accent); }
 .settings .slider span { width: 36px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
 .settings .wide { height: 42px; border-radius: 12px; border: 1px solid var(--border); background: var(--bg); }
+.ping-out { margin: 0; white-space: pre-wrap; font: 13px/1.4 ui-monospace, Menlo, monospace; color: var(--muted); }
+.ping-out:empty { display: none; }

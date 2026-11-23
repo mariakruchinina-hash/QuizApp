@@ -356,7 +356,8 @@
 
   /* касание лица */
   faceWrap.addEventListener('click', (e) => {
-    if (e.target.closest('button') || e.target === cam || busy) return;
+    if (e.target.closest('button') || e.target === cam) return;
+    if (busy) { AI.cancel(); return; }
     poke();
     if (wake()) { louisSays({ text: pick(['Ой, я задремал! Привет!', 'М-м? Я тут, я не спал!']), emotion: 'happy' }); return; }
     if (listening) return;
@@ -559,6 +560,13 @@
   $('pitch').addEventListener('input', (e) => { voiceCfg.pitch = parseFloat(e.target.value); store.set('pitch', voiceCfg.pitch); showVoiceVals(); });
   $('rate').addEventListener('input', (e) => { voiceCfg.rate = parseFloat(e.target.value); store.set('rate', voiceCfg.rate); showVoiceVals(); });
   $('btnTryVoice').addEventListener('click', () => say('Привет! Я Луи. Мне очень нравится с тобой болтать.'));
+
+  $('btnPing').addEventListener('click', async () => {
+    const out = $('pingOut');
+    if (!AI.hasKey()) { out.textContent = 'Сначала сохрани ключ.'; return; }
+    out.textContent = 'Проверяю…';
+    out.textContent = await AI.ping();
+  });
 
   $('btnSaveKey').addEventListener('click', async () => {
     const k = keyInput.value.trim();
